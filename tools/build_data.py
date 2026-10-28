@@ -34,6 +34,7 @@ for n in ["Anchovy", "Apple", "Artichoke", "Bacon", "Basil", "Bell Pepper", "Chi
           "Peach", "Pepperoni", "Pineapple", "Pork Belly", "Potato", "Pumpkin", "Rose Petal",
           "Sausage", "Scallop", "Shrimp", "Sliced Tomato", "Tofu", "Truffle", "Zucchini"]:
     IMAGES.setdefault(n, "Ingredients_" + n.replace(" ", "_") + "-Box")
+IMAGES["Bell Pepper"] = "Ingredients_Bell-Pepper-Box"
 IMAGES = {k: v for k, v in IMAGES.items() if os.path.exists(os.path.join(IMG_DIR, v + ".webp"))}
 
 

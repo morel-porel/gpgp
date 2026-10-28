@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   "use strict";
   const D = window.DATA;
   const $app = document.getElementById("app");
@@ -117,6 +117,7 @@
         rows += `<div class="half"><div class="half-label">${label}</div><div class="tags">${baseTags(halves[i])}</div>` +
           `<div class="chips">${t.length ? t.map(chip).join("") : '<span class="empty-note">no toppings</span>'}</div></div>`;
       });
+      rows = `<div class="halves">${rows}</div>`;
     } else {
       const t = toppings(halves[0]);
       rows += `<div class="tags">${baseTags(halves[0])}</div>`;
@@ -145,14 +146,19 @@
     return p.length > 1 ? p[p.length - 1] : p[0];
   }
 
-  function orderCard(e, toks) {
+  function sayHTML(d, toks) {
+    const extra = Object.keys(d).filter((k) => k !== "q" && k !== "a").map((k) => d[k]);
+    const alts = [d.a, ...extra].filter(Boolean);
+    return `<div class="say">${d.q ? `<p class="q">${highlight(d.q, toks)}</p>` : ""}` +
+      alts.map((a) => `<p class="a"><b>${d.q ? 'Ask “What?”' : "Says"}</b> ${highlight(a, toks)}</p>`).join("") + `</div>`;
+  }
+
+  // shown: dialogues matching the search; hidden: the rest (collapsed) when the match came from the recipe/section only
+  function orderCard(e, toks, shown, collapsed) {
     const sec = sectionById[e.section];
-    const lines = e.dialogue.map((d) => {
-      const extra = Object.keys(d).filter((k) => k !== "q" && k !== "a").map((k) => d[k]);
-      const alts = [d.a, ...extra].filter(Boolean);
-      return `<div class="say">${d.q ? `<p class="q">${highlight(d.q, toks)}</p>` : ""}` +
-        alts.map((a) => `<p class="a"><b>${d.q ? 'Ask “What?”' : "Says"}</b> ${highlight(a, toks)}</p>`).join("") + `</div>`;
-    }).join("");
+    const list = shown || e.dialogue;
+    let lines = list.map((d) => sayHTML(d, toks)).join("");
+    if (collapsed && collapsed.length) lines += `<details class="more-lines"><summary>Show ${collapsed.length} more line${collapsed.length > 1 ? "s" : ""}</summary><div class="lines">${collapsed.map((d) => sayHTML(d, toks)).join("")}</div></details>`;
     const notes = e.notes.map((n) => `<div class="note">💡 ${esc(n)}</div>`).join("");
     const named = /^(Named|Variable)/.test(sec.path[0]) && sec.path[1];
     return `<article class="card">
@@ -160,10 +166,10 @@
         <h3>${esc(named ? sec.path[1] : titleOf(sec))}</h3>
         <span class="where">${crumbs(sec)}</span>
       </div>
-      ${recipeBlock(e)}
-      <div class="lines">${lines || '<div class="empty-note">No dialogue recorded.</div>'}</div>
-      ${notes}
-      <div class="raw">${esc(e.raw)}</div>
+      <div class="card-body two">
+        <div class="recipe">${recipeBlock(e)}<div class="raw">${esc(e.raw)}</div></div>
+        <div class="dlg"><div class="lines">${lines || '<div class="empty-note">No dialogue recorded.</div>'}</div>${notes}</div>
+      </div>
     </article>`;
   }
 
@@ -178,40 +184,57 @@
   /* ---------- search ---------- */
   const blobs = D.entries.map((e) => {
     const sec = sectionById[e.section];
-    const dlg = e.dialogue.map((d) => Object.values(d).join(" ")).join(" ");
-    return { e, dlg: norm(dlg), meta: norm(sec.path.join(" ") + " " + e.notes.join(" ") + " " + e.raw + " " + (e.label || "")) };
+    return {
+      e,
+      dl: e.dialogue.map((d) => ({ d, text: norm(Object.values(d).join(" ")) })),
+      meta: norm(sec.path.join(" ") + " " + e.notes.join(" ") + " " + e.raw + " " + (e.label || "")),
+    };
   });
   const bookBlobs = D.book.map((r) => ({ r, text: norm(r.name + " " + r.raw + " " + r.group + " " + r.unlocked) }));
 
-  function search(q, filter) {
-    const toks = tokensOf(q);
-    if (!toks.length) return { toks, hits: [], approx: false, book: [] };
-    const phrase = norm(q);
-    const scoreOf = (b) => {
-      let matched = 0, s = 0;
-      for (const t of toks) {
-        if (b.dlg.includes(t)) { matched++; s += 3; }
-        else if (b.meta.includes(t)) { matched++; s += 1; }
-      }
-      if (b.dlg.includes(phrase)) s += 20;
-      return { matched, s };
-    };
-    let all = blobs.map((b) => ({ b, ...scoreOf(b) }));
-    let hits = all.filter((x) => x.matched === toks.length);
-    let approx = false;
-    if (!hits.length && toks.length > 1) {
-      const need = Math.max(1, Math.ceil(toks.length / 2));
-      hits = all.filter((x) => x.matched >= need);
-      approx = true;
-    }
-    hits.sort((a, b) => b.matched - a.matched || b.s - a.s || a.b.e.id - b.b.e.id);
-    const counts = {};
-    hits.forEach((h) => { const g = sectionById[h.b.e.section].path[0]; counts[g] = (counts[g] || 0) + 1; });
-    if (filter && filter !== "all") hits = hits.filter((h) => sectionById[h.b.e.section].path[0] === filter);
-    const book = bookBlobs.filter((b) => toks.every((t) => b.text.includes(t))).map((b) => b.r).slice(0, 4);
-    return { toks, hits: hits.map((h) => h.b.e), approx, book, counts };
+  // Tiers: 0 = a dialogue line contains every word, 1 = line contains some words and recipe/section covers the rest,
+  // 2 = only the recipe/section matches, 3 = partial (approximate) match
+  function matchEntry(b, toks, phrase) {
+    const lines = b.dl.map((x) => {
+      const inD = toks.filter((t) => x.text.includes(t)).length;
+      const inAny = toks.filter((t) => x.text.includes(t) || b.meta.includes(t)).length;
+      return { d: x.d, inD, inAny, phrase: x.text.includes(phrase) };
+    });
+    const rank = (a, c) => (c.phrase - a.phrase) || (c.inD - a.inD);
+    const exact = lines.filter((l) => l.inD === toks.length).sort(rank);
+    if (exact.length) return { tier: 0, score: exact[0].phrase ? 2 : 1, shown: exact.map((l) => l.d) };
+    const mixed = lines.filter((l) => l.inD > 0 && l.inAny === toks.length).sort(rank);
+    if (mixed.length) return { tier: 1, score: mixed[0].inD, shown: mixed.map((l) => l.d) };
+    if (toks.every((t) => b.meta.includes(t))) return { tier: 2, score: 0, shown: b.e.dialogue.slice(0, 2), collapsed: b.e.dialogue.slice(2) };
+    return null;
   }
 
+  function search(q, filter) {
+    const toks = tokensOf(q);
+    if (!toks.length) return { toks, hits: [], approx: false, book: [], counts: {} };
+    const phrase = norm(q);
+    let hits = [];
+    for (const b of blobs) {
+      const m = matchEntry(b, toks, phrase);
+      if (m) hits.push({ e: b.e, ...m });
+    }
+    let approx = false;
+    if (!hits.length && toks.length > 1) {
+      approx = true;
+      const need = Math.max(1, Math.ceil(toks.length / 2));
+      for (const b of blobs) {
+        const lines = b.dl.map((x) => ({ d: x.d, n: toks.filter((t) => x.text.includes(t) || b.meta.includes(t)).length }))
+          .filter((l) => l.n >= need).sort((a, c) => c.n - a.n);
+        if (lines.length) hits.push({ e: b.e, tier: 3, score: lines[0].n, shown: lines.map((l) => l.d) });
+      }
+    }
+    hits.sort((a, b) => a.tier - b.tier || b.score - a.score || a.e.id - b.e.id);
+    const counts = {};
+    hits.forEach((h) => { const g = sectionById[h.e.section].path[0]; counts[g] = (counts[g] || 0) + 1; });
+    if (filter && filter !== "all") hits = hits.filter((h) => sectionById[h.e.section].path[0] === filter);
+    const book = bookBlobs.filter((b) => toks.every((t) => b.text.includes(t))).map((b) => b.r).slice(0, 4);
+    return { toks, hits, approx, book, counts };
+  }
   let searchState = { q: "", filter: "all", shown: 30 };
 
   function renderSearch(q, keepState) {
@@ -227,7 +250,7 @@
       if (r.approx && total) html += `<div class="callout">No order contains every word — showing the closest matches.</div>`;
       if (r.book.length && searchState.filter === "all") html += `<div class="sub">Recipe book</div>` + r.book.map(bookCard).join("") + (r.hits.length ? `<div class="sub">Customer orders</div>` : "");
       const list = r.hits.slice(0, searchState.shown);
-      html += list.map((e) => orderCard(e, r.toks)).join("");
+      html += list.map((h) => orderCard(h.e, r.toks, h.shown, h.collapsed)).join("");
       if (r.hits.length > list.length) html += `<button class="more" id="more">Show more (${r.hits.length - list.length} left)</button>`;
       if (!r.hits.length && !r.book.length) html += `<div class="empty"><p>No orders found.</p><p>Try fewer or shorter words (e.g. “wheat” instead of “wheatbread”).</p></div>`;
     }
@@ -407,3 +430,5 @@
   window.addEventListener("hashchange", route);
   route();
 })();
+
+
