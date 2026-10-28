@@ -29,7 +29,7 @@ IMAGES = {
     "Sauce": "Tomato_Sauce", "Tomato Sauce": "Tomato_Sauce", "Pesto Sauce": "Pesto_Sauce",
     "Chili Bean Sauce": "Chili_Bean_Sauce", "Cheese": "Ingredients_Cheese-Box",
 }
-for n in ["Anchovy", "Apple", "Artichoke", "Bacon", "Basil", "Bell Pepper", "Chicken", "Corn",
+for n in ["Anchovy", "Apple", "Artichoke", "Avocado", "Bacon", "Basil", "Bell Pepper", "Chicken", "Corn",
           "Duck", "Eggplant", "Fig", "Garlic", "Ham", "Jalapeno", "Mushroom", "Olive", "Onion",
           "Peach", "Pepperoni", "Pineapple", "Pork Belly", "Potato", "Pumpkin", "Rose Petal",
           "Sausage", "Scallop", "Shrimp", "Sliced Tomato", "Tofu", "Truffle", "Zucchini"]:
